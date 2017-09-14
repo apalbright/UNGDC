@@ -4,3 +4,5 @@ Unzip the `zip` file to generate the `sec_council` folder which the `Rmd` file w
 Results are discussed here.
 Here is the [R notebook.](http://rpubs.com/apalbright/un-words)
 
+See the included `png`s for the images used in the blog post.
+
