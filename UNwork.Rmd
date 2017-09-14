@@ -1,0 +1,269 @@
+---
+title: "The United Nations of Words"
+author: Alex Albright
+date: 9-13-17
+output: html_notebook
+---
+# Motivation
+I've been interested in playing around with text mining in R now for a while. Specifically, I wanted to try out some of the methods outlined  [here.](http://tidytextmining.com/) 
+
+The other week I checked my email and saw a new issue of [Data is Plural](https://tinyletter.com/data-is-plural) that linked to the [UN General Debate Corpus.](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/0TJX8Y)
+
+> Every year since 1947, representatives of UN member states gather at the annual sessions of the United Nations General Assembly. The centrepiece of each session is the General Debate. This is a forum at which leaders and other senior officials deliver statements that present their government’s perspective on the major issues in world politics. These statements are akin to the annual legislative state-of-the-union addresses in domestic politics. This new dataset, the UN General Debate Corpus (UNGDC), introduces the corpus of texts of General Debate statements from 1970 (Session 25) to 2016 (Session 71).
+
+I will use this data to perform [1] a term frequency analysis and [2] a sentiment analysis.
+
+# [1] Term frequency analysis
+
+I am going to use this data to compare the content of UN Security council countries' speeches via [tf-idf](https://en.wikipedia.org/wiki/Tf%E2%80%93idf) (a statistic that shows how important a word is to a document in a corpus). Think of the countries as different documents and the corpus as the collection of all speeches. The Security Council countries are the US, Britain, France, China, and Russia.
+
+The tf-idf measure has been used for looking into [phrases used by GOP candidates](https://fivethirtyeight.com/features/these-are-the-phrases-each-gop-candidate-repeats-most/). It has also been used to discover the [most important words by character in the TV Show Seinfeld](http://mdgbeck.netlify.com/post/tidytext-analysis-of-seinfeld/). Those are just a few examples.
+
+I downloaded the `txt` files for those countries' speeches in a folder `sec_council`. Let's now import the data.
+```{r}
+library(readtext)
+speeches<-readtext("sec_council/*",
+         docvarsfrom = "filenames", 
+         docvarnames = c("country", "speech_num", "year"),
+         dvsep = "_", 
+         encoding = "ISO-8859-1")
+```
+
+Let's make some basic changes to the text. 
+```{r}
+speeches$text<-gsub("'s", "", speeches$text)
+speeches$text<-gsub("â", "", speeches$text)
+speeches$text<-gsub("92s", "s", speeches$text)
+speeches$text<-gsub("Prance", "France", speeches$text)
+```
+
+Now, we follow steps outlined in the Text Mining manual. 
+```{r, message=FALSE, warning=FALSE}
+library(tidytext); library(dplyr); library(tidyr)
+
+country_words <- speeches %>%
+  unnest_tokens(word, text) %>%
+  count(country, word, sort = TRUE) %>%
+  ungroup()
+
+total_words <- country_words %>% 
+  group_by(country) %>% 
+  summarize(total = sum(n))
+
+country_words1 <- left_join(country_words, total_words)
+
+country_words1
+```
+
+```{r}
+country_words2 <- country_words1 %>%
+  bind_tf_idf(word, country, n)
+country_words2
+```
+```{r}
+country_words2 %>%
+  select(-total) %>%
+  arrange(desc(tf_idf))
+```
+Call my theme so that I can then plot the tf-idf words for countries.
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2);library(ggrepel); library(extrafont); library(ggthemes);library(reshape);library(grid);
+library(scales);library(RColorBrewer);library(gridExtra);
+
+my_theme <- function() {
+
+  # Define colors for the chart
+  palette <- brewer.pal("Greys", n=9)
+  color.background = palette[2]
+  color.grid.major = palette[4]
+  color.panel = palette[3]
+  color.axis.text = palette[9]
+  color.axis.title = palette[9]
+  color.title = palette[9]
+
+  # Create basic construction of chart
+  theme_bw(base_size=9, base_family="Palatino") + 
+
+  # Set the entire chart region to a light gray color
+  theme(panel.background=element_rect(fill=color.panel, color=color.background)) +
+  theme(plot.background=element_rect(fill=color.background, color=color.background)) +
+  theme(panel.border=element_rect(color=color.background)) +
+
+  # Format grid
+  theme(panel.grid.major=element_line(color=color.grid.major,size=.25)) +
+  theme(panel.grid.minor=element_blank()) +
+  theme(axis.ticks=element_blank()) +
+
+  # Format legend
+  theme(legend.position="right") +
+  theme(legend.background = element_rect(fill=color.background)) +
+  theme(legend.text = element_text(size=8,color=color.axis.title)) + 
+  theme(legend.title = element_blank()) + 
+  
+  #Format facet labels
+  theme(strip.text.x = element_text(size = 8, face="bold"))+
+
+  # Format title and axes labels these and tick marks
+  theme(plot.title=element_text(color=color.title, size=28)) +
+  theme(axis.text.x=element_text(size=8)) +
+  theme(axis.text.y=element_text(size=8)) +
+  theme(axis.title.x=element_text(size=8)) +
+  theme(axis.title.y=element_text(size=8)) +
+
+  #Format title and facet_wrap title
+  theme(strip.text = element_text(size=8), plot.title = element_text(size = 16, colour = "black", vjust = 1, hjust=0))+
+    
+  # Plot margins
+  theme(plot.margin = unit(c(.2, .2, .2, .5), "cm"))
+}
+```
+
+## Plot top 20 tf-idf words
+```{r, fig.height=2, fig.width=4}
+library(ggplot2)
+
+plot_country <- country_words2 %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word))))
+
+plot_country %>% 
+  top_n(20) %>%
+  ggplot(aes(word, tf_idf, fill = country)) +
+  geom_col() +
+  scale_fill_brewer(palette="Accent")+
+  scale_y_continuous(labels = comma)+
+  my_theme()+
+  ggtitle("Most Important Words to National Security Council Countries", subtitle="As determined by tf-idf scores generated from 1970-2016 UN General Debate speeches")+
+  labs(y = "tf-idf score", x=NULL, caption="Data Source: United Nations General Debate Corpus\nVisualization via Alex Albright (thelittledataset.com)") +
+  coord_flip()+
+  ggsave("tfidftotal.png", width = 8, height = 5, dpi = 800)
+```
+These are the top 20 words in terms of tf-idf scores. 
+
+## Plot top 5 words for each country
+```{r}
+top5words<-plot_country %>% 
+  group_by(country) %>% 
+  arrange(desc(tf_idf)) %>%
+  top_n(5) 
+top5words 
+```
+
+```{r, fig.height=3, fig.width=4.5}
+top5words %>% 
+  arrange(desc(tf_idf)) %>%
+  ggplot(aes(word, tf_idf, fill = country)) +
+  geom_col(show.legend = FALSE) +
+  scale_y_continuous(labels = comma)+
+  my_theme()+
+  labs(x = NULL, y = "tf-idf") +
+  scale_fill_brewer(palette="Accent")+
+  facet_wrap(~country, ncol = 2, scales = "free") +
+  my_theme()+
+  ggtitle("Top 5 Most Important Words to Each National Security Council Country", subtitle="As determined by tf-idf scores generated from 1970-2016 UN General Debate speeches")+
+  labs(y = "tf-idf score", x=NULL, caption="Data Source: United Nations General Debate Corpus\nVisualization via Alex Albright (thelittledataset.com)") +
+  coord_flip()+
+  theme(plot.margin = unit(c(.2, .6, .2, .4), "cm"))+
+  ggsave("tfidf_country.png", width = 8.33, height = 7, dpi = 800)
+```
+What's with "twelve" for France? Well, I looked into some of the usages and "The Twelve" is used to refer to Europe! This makes sense as France and Great Britain use it throughout their speeches.
+
+# [2] Sentiment Analysis
+# Positivity scores (comparing 3 lexicons)
+I want to know which country is the most positive. There are three dictionaries for this: `bing`, `AFINN`, and `NRC`. We will compare all three.
+```{r}
+emo_words <- speeches %>%
+  group_by(country) %>%
+  ungroup() %>%
+  unnest_tokens(word, text) 
+emo_words
+
+#find total number of words
+wordstot <- emo_words %>%
+  count(country)
+wordstot$tot<-wordstot$n
+wordstot<-wordstot[,c("country", "tot")]
+```
+Ok now let's link these words and countries up with the three lexicon dictionaries of interest.
+
+```{r}
+afinn <- emo_words %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(country) %>% 
+  summarise(sentiment = sum(score)) %>% 
+  mutate(method = "AFINN")
+
+bing_and_nrc <- bind_rows(emo_words %>% 
+                            inner_join(get_sentiments("bing")) %>%
+                            mutate(method = "Bing"),
+                          emo_words %>% 
+                            inner_join(get_sentiments("nrc") %>% 
+                                         filter(sentiment %in% c("positive", 
+                                                                 "negative"))) %>%
+                            mutate(method = "NRC")) %>%
+  count(method, country, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+```
+The above is an adapted chunk of text from [this page.](http://tidytextmining.com/sentiment.html)
+```{r, fig.height=2, fig.width=3}
+bind_rows(afinn, 
+          bing_and_nrc) %>%
+  ggplot(aes(country, sentiment, fill = country)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 3, scales = "free")+
+  my_theme()+ theme(plot.margin = unit(c(.2, .4, .2, .4), "cm"))+
+  ggtitle("Which Country is the Most Positive?", subtitle="AFINN, Bing, NRC positivity scores generated using 1970-2016 UN General Debate speeches")+
+  labs(y = NULL, x=NULL, caption="\nData Source: United Nations General Debate Corpus\nVisualization via Alex Albright (thelittledataset.com)") +
+  scale_fill_brewer(palette="Accent")+
+  ggsave("country_pos.png", width = 8, height = 5, dpi = 800)
+```
+
+# `NRC` scores
+What if we looked more in depth at the `NRC` sentiment dictionary? It's got a long list of sentiments! ...way beyond positive and negative!
+```{r}
+emo_words <- emo_words %>%
+        inner_join(get_sentiments("nrc")) %>%
+        filter(!is.na(sentiment)) %>%
+        filter(!is.na(country)) %>%
+        count(country, sentiment, sort = TRUE)
+#bring in totals so we can make these percentages
+emo_words <- merge(emo_words, wordstot, by="country")
+emo_words$nperc <- emo_words$n/emo_words$tot
+emo_words
+```
+
+```{r, fig.height=2, fig.width=3}
+my.cols <- brewer.pal(10, "Set3")
+my.cols[9] <- "grey60"
+
+emo_words %>% 
+  ggplot(aes(x=country, y=nperc, fill = sentiment)) +
+  geom_bar(stat="identity") +
+  scale_y_continuous(labels = percent)+
+  my_theme()+
+  scale_fill_manual(values=my.cols)+
+  my_theme()+ 
+  ggtitle("Countries have feelings too!", subtitle="NRC sentiment word percentages generated from 1970-2016 UN General Debate speeches")+
+  labs(y = "Percentage of emotion-related words", x=NULL, caption="\nData Source: United Nations General Debate Corpus\nVisualization via Alex Albright (thelittledataset.com)") +
+  coord_flip()+
+  theme(plot.margin = unit(c(.2, .2, .2, .2), "cm"))+
+  ggsave("feelings1.png", width = 8, height = 5, dpi = 800)
+```
+```{r, fig.height=2, fig.width=3}
+emo_words %>% 
+  ggplot(aes(x=country, y=nperc, fill = sentiment)) +
+  geom_bar(stat="identity", position="dodge") +
+  scale_y_continuous(labels = percent)+
+  my_theme()+
+  scale_fill_manual(values=my.cols)+
+  my_theme()+
+  ggtitle("Countries have feelings too!", subtitle="NRC sentiment word percentages generated from 1970-2016 UN General Debate Speeches")+
+  labs(y = "Percentage of emotion-related words", x=NULL, caption="\nData Source: United Nations General Debate Corpus\nVisualization via Alex Albright (thelittledataset.com)") +
+  coord_flip()+
+  theme(plot.margin = unit(c(.2, .2, .2, .3), "cm"))+
+  ggsave("feelings2.png", width = 8, height = 5, dpi = 800)
+```
+Interesting how similar the break-downs are by emotion for all the countries. I wonder how speeches like this compare to books or articles. I'd imagine in some ways they are more dramatic/emotional, as they are speeches on behalf of a country on an international stage. Perhaps that's something to look into another day.
+
+# The End!
